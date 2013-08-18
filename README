@@ -1,0 +1,12 @@
+Fantasy Football on Glass
+Copyright Josh Gachnang, 2012
+Licensed under GPLv3
+
+Fantasy Football on Glass scrapes the Yahoo Fantasy Football API to get real time stats for the leagues you input. You'll get timeline cards added to your Glass any time a player scores.
+
+Todo:
+* Let you put in leagues instead of individual players, and automatically scrape them.
+* Allow other notification styles
+* Give notifications throughout the week with notes from ESPN Fantasy news and other sources about your players
+* Give you a heads up when your players are going into bye weeks, injured, etc.
+* Get league specific stats (actual points instead of just touchdowns, matchups, whether you're winning, etc)

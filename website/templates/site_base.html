@@ -1,0 +1,38 @@
+{% load staticfiles %}
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="//netdna.bootstrapcdn.com/bootstrap/3.0.0-rc1/css/bootstrap.min.css">
+    <link rel="stylesheet" href="{% static "css/ff.css" %}">
+
+
+    <title>Fantasy Football On Glass</title>
+    {% block head %}
+    {% endblock %}
+</head>
+<body>
+    {% block content %}
+    <h1>Fantasy Football on Glass</h1>
+    {% endblock %}
+    <footer class="text-center">
+        Copyright <a href="http://servercobra.com/">Josh Gachnang</a>, 2013.
+    </footer>
+    <!-- Begin Javascript imports -->
+    <script src="//code.jquery.com/jquery-1.10.1.min.js"></script>
+    <script src="//netdna.bootstrapcdn.com/bootstrap/3.0.0-rc1/js/bootstrap.min.js"></script>
+    <script src="{% static "js/jquery.form.min.js" %}"></script>
+    <script src="{% static "js/mustache.js" %}"></script>
+    <script src="{% static "js/ff.js" %}"></script>
+
+
+    <!-- End Javascript imports -->
+</body>
+
+</html>
+
+
+
+
+
+
+

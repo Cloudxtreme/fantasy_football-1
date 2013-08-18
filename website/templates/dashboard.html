@@ -1,0 +1,59 @@
+{% extends "site_base.html" %}
+{% load staticfiles %}
+
+{% block content %}
+<h1>Fantasy Football on Glass</h1>
+<div class="row">
+<div class="col-lg-12">
+<table class="table table-condensed" id="o_table">
+    <caption><h3>Offensive Players</h3></caption>
+    <thead>
+        <th>Name</th>
+        <th>Team</th>
+        <th>Pos</th>
+        <th>Pass Yds</th>
+        <th>Pass TDs</th>
+        <th>Rush Yds</th>
+        <th>Rush TDs</th>
+        <th>Rec Yds</th>
+        <th>Rec TDs</th>
+        <th>Ret TD</th>
+        <th>2pt</th>
+        <th>Int</th>
+        <th>Fum Lost</th>
+        <th>Fum TD</th>
+    </thead>
+    <tbody id="o_table_body"></tbody>
+</table>
+</div>
+</div>
+<div class="row">
+<div class="col-lg-12">
+<table class="table table-condensed" id="k_table">
+    <caption><h3>Kickers</h3></caption>
+    <thead>
+        <th>Name</th>
+        <th>Team</th>
+        <th>0-19</th>
+        <th>20-29</th>
+        <th>30-39</th>
+        <th>40-49</th>
+        <th>50+</th>
+        <th>PAT</th>
+    </thead>
+    <tbody id="k_table_body"></tbody>
+</table>
+</div>
+</div>
+<div class="row">
+<div class="col-lg-4 col-lg-offset-6">
+<form id="add_player_form" class="add_player_form" action="/api/players/" method="POST" role="form">{% csrf_token %}
+    <div class="form-group">
+        <label for="player_name_field">Player Name:</label>
+        <input name="player_name" class="form-control" id="player_name_field" placeholder="Enter name">
+    </div>
+    <button type="submit" class="btn btn-primary">Submit</button>
+</form>
+</div>
+</div>
+{% endblock %}

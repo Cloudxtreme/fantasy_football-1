@@ -1,0 +1,12 @@
+{% extends "site_base.html" %}
+{% load staticfiles %}
+
+
+{% block content %}
+    <h1>Welcome to Fantasy Football on Glass</h1>
+    <p>This Glassware will let you keep track of your fantasy football league(s) while you watch the game. No more staring at laptops checking scores when you should be watching your team win.
+    Supposed to be having a Terrific Lady Day with your wife? Banned from fantasy football on the big day? Stuck at work? No problem! Get updates as your players score without constantly pulling
+    out your phone or laptop. They'll never know!</p>
+
+    <a href="{{ auth_url }}"><img class="login_button" src="{% static  "img/sign-in-with-google.png" %}" alt="Sign in with Google"/></a>
+{% endblock %}
