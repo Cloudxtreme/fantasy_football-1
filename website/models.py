@@ -9,9 +9,9 @@ from django.core.validators import URLValidator
 from django.contrib import admin
 from yahoo import YQL
 from glass.mirror import Mirror, Timeline
+from scrapers import ESPNScraper, YahooScraper
 # from google_glass import send_notifications
-from django.db import connection
-
+from django.db import connection, IntegrityError
 
 TOKEN_FILE = 'yahoo_tokens.pkl'
 GAME_KEY = 314
@@ -248,15 +248,59 @@ class LeaguePlayer(models.Model):
     class Meta:
         unique_together = (('league', 'player'))
 
+LEAGUE_TYPE_CHOICES = (('Yahoo', 'Yahoo'), ('ESPN', 'ESPN'))
+
 class League(models.Model):
     name = models.CharField(max_length=64, default="League")
     players = models.ManyToManyField(Player, through=LeaguePlayer)
+    url = models.URLField(blank=True, null=True)
+    league_type = models.CharField(choices=LEAGUE_TYPE_CHOICES, max_length=32, default="ESPN")
+
+    def scrape(self):
+        if self.league_type == 'ESPN':
+            scraper = ESPNScraper(self.url)
+        elif self.league_type == 'Yahoo':
+            scraper = YahooScraper(self.url, credentials=None)
+        else:
+            return None
+        return scraper.scrape()
+
+    def update_league(self):
+        data = self.scrape()
+        for player_name, team_pos in data['players'].items():
+            team = team_abbreviations[team_pos['team'].upper()]
+            position = team_pos['position']
+            try:
+                player = Player.objects.filter(name=player_name).filter(editorial_team_full_name=team).get(display_position=position)
+                # Create a player-league relationship
+                lp = LeaguePlayer(league=self, player=player)
+                # Try to add the relationship. Since we have key restraints, this will fail if it already exists to
+                # that player.
+                try:
+                    lp.save()
+                except IntegrityError:
+                    continue
+            except Player.DoesNotExist:
+                logger.warning("Could not find player {0} from url {1}".format(player_name, self.url))
+                continue
+            except Player.MultipleObjectsReturned:
+                logger.warning("Found multiple players for same player: {0} url: {1}".format(player_name, self.url))
+            # Now look for deleted players.
+        existing_players = self.players.all()
+        for existing_player in existing_players:
+            if existing_player.name not in data['players']:
+                # Delete the relationship, player no longer in league.
+                relationship = LeaguePlayer.objects.filter(league=self).filter(player=existing_player)
+                logger.debug("Deleting dropped player {0} from league {1}".format(existing_player, self.name))
+                relationship.delete()
 
     def __str__(self):
         return self.name
 
     def __repr__(self):
         return self.__str__()
+
+
 
 
 class UserLeague(models.Model):
@@ -543,7 +587,44 @@ team_abbreviations = {
 "TB": "Tampa Bay Buccaneers",
 "TEN": "Tennessee Titans",
 "WAS": "Washington Redskins",
+"WSH": "Washington Redskins",
 }
+
+team_to_editorial_team_full_name = {
+'Falcons': 'Atlanta Falcons',
+'Bills': 'Buffalo Bills',
+'Bears': 'Chicago Bears',
+'Bengals': 'Cincinnati Bengals',
+'Browns': 'Cleveland Browns',
+'Cowboys': 'Dallas Cowboys',
+'Broncos': 'Denver Broncos',
+'Lions': 'Detroit Lions',
+'Packers': 'Green Bay Packers',
+'Titans': 'Tennessee Titans',
+'Colts': 'Indianapolis Colts',
+'Chiefs': 'Kansas City Chiefs',
+'Raiders': 'Oakland Raiders',
+'Rams': 'St. Louis Rams',
+'Dolphins': 'Miami Dolphins',
+'Vikings': 'Minnesota Vikings',
+'Patriots': 'New England Patriots',
+'Saints': 'New Orleans Saints',
+'Giants': 'New York Giants',
+'Jets': 'New York Jets',
+'Eagles': 'Philadelphia Eagles',
+'Cardinals': 'Arizona Cardinals',
+'Steelers': 'Pittsburgh Steelers',
+'Chargers': 'San Diego Chargers',
+'49ers': 'San Francisco 49ers',
+'Seahawks': 'Seattle Seahawks',
+'Buccaneers': 'Tampa Bay Buccaneers',
+'Redskins': 'Washington Redskins',
+'Panthers': 'Carolina Panthers',
+'Jaguars': 'Jacksonville Jaguars',
+'Ravens': 'Baltimore Ravens',
+'Texans': 'Houston Texans',
+}
+
 team_icons = {
 "ARI": "cardinals.gif",
 "ATL": "falcons.gif",
