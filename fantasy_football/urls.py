@@ -28,5 +28,7 @@ urlpatterns += patterns('website.views',
 urlpatterns += patterns('website.api',
     url(r'^api/scores/$', 'scores'),
     url(r'^api/scores/(?P<user_id>\d+)/$', 'scores'),
-    url(r'^api/players/', 'players')
+    url(r'^api/players/', 'players'),
+    url(r'^api/leagues/', 'leagues'),
+    url(r'^api/leagues/(?P<league_id>\d+)/$', 'leagues'),
 )

@@ -255,6 +255,7 @@ class League(models.Model):
     players = models.ManyToManyField(Player, through=LeaguePlayer)
     url = models.URLField(blank=True, null=True)
     league_type = models.CharField(choices=LEAGUE_TYPE_CHOICES, max_length=32, default="ESPN")
+    record = models.CharField(max_length=32, default="0 - 0")
 
     def scrape(self):
         if self.league_type == 'ESPN':
@@ -267,6 +268,10 @@ class League(models.Model):
 
     def update_league(self):
         data = self.scrape()
+        self.name = data['team_name']
+        self.record = data['record']
+        self.save()
+        print "name", self.name
         for player_name, team_pos in data['players'].items():
             team = team_abbreviations[team_pos['team'].upper()]
             position = team_pos['position']
@@ -301,8 +306,6 @@ class League(models.Model):
         return self.__str__()
 
 
-
-
 class UserLeague(models.Model):
     league = models.ForeignKey('League')
     user_profile = models.ForeignKey('UserProfile')
@@ -315,6 +318,7 @@ class UserLeague(models.Model):
 
     class Meta:
         unique_together = (('league', 'user_profile'))
+
 
 class UserProfile(models.Model):
     user = models.ForeignKey(User, primary_key=True, related_name="profile")

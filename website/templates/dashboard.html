@@ -47,12 +47,16 @@
 </div>
 <div class="row">
 <div class="col-lg-4 col-lg-offset-6">
-<form id="add_player_form" class="add_player_form" action="/api/players/" method="POST" role="form">{% csrf_token %}
+<form id="add_league_form" class="add_league_form" action="/api/leagues/" method="POST" role="form">{% csrf_token %}
     <div class="form-group">
-        <label for="player_name_field">Player Name:</label>
-        <input name="player_name" class="form-control" id="player_name_field" placeholder="Enter name">
+        <label for="league_url">Player Name:</label>
+        <input name="league_url" class="form-control" id="league_url_field" placeholder="Enter League URL">
     </div>
-    <button type="submit" class="btn btn-primary">Submit</button>
+    <select name="league_type" class="form-control" id="league_type_field">
+        <option value="ESPN">ESPN</option>
+        <option value="Yahoo">Yahoo</option>
+    </select>
+    <button type="submit" class="btn btn-primary">Add League</button>
 </form>
 </div>
 </div>

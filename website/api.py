@@ -60,6 +60,57 @@ def players(request):
     else:
         return HttpResponseBadRequest("Only POST supported currently.")
 
+def leagues(request, league_id=None):
+    if request.method == "POST":
+        if not request.user.is_authenticated():
+            return HttpResponseBadRequest("User must be authenticated to add a league.")
+        if league_id is not None:
+            return HttpResponseBadRequest("League ID not legal argument when adding league.")
+        try:
+            user_profile = UserProfile.objects.get(user=request.user.id)
+        except UserProfile.DoesNotExist:
+            return HttpResponseBadRequest("Could nto find User Profile for user id: {0}.".format(request.user.id))
+        print request.POST
+        league_url = request.POST.get('league_url', None)
+        if league_url is None:
+            return HttpResponseBadRequest("League URL cannot be none.")
+        league_type = request.POST.get('league_type', 'ESPN')
+        league = League(url=league_url.strip(), league_type=league_type)
+        league.save()
+        league.update_league()
+        user_league = UserLeague(league=league, user_profile=user_profile)
+        user_league.save()
+        league_json = league_to_json(league)
+        return render_to_json(request, league_json)
+
+    elif request.method == "GET":
+        if request.user.is_authenticated():
+            user = request.user.id
+            user_profile = UserProfile.objects.get(user=user)
+        else:
+            user = None
+        if user is None and league_id is None:
+            return HttpResponseBadRequest("Must either be a logged in user or supply a league ID")
+        leagues = League.objects.all()
+        if user is not None:
+            leagues = leagues.filter(userprofile=user)
+        if league_id is not None:
+            leagues = leagues.filter(id=league_id)
+
+        print model_to_dict(leagues[0])
+
+def league_to_json(league):
+    data = {}
+    league_players = LeaguePlayer.objects.prefetch_related().filter(league=league)
+    for league_player in league_players:
+        player = league_player.player
+        data[player.player_key] = model_to_dict(player)
+        data[player.player_key]['stats'] = {}
+        for stat in player.stats.all():
+            data[player.player_key]['stats'][stat.stat_id] = model_to_dict(stat)
+    print data
+    return data
+
 
 def render_to_json(request, data):
     # msgs = {}
