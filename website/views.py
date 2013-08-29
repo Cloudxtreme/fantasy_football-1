@@ -48,11 +48,7 @@ def oauth_return(request):
         login(request, user)
         # Now we need to create a user profile and an initial league.
         # TODO let the user create the league. And have multiple leagues.
-        league = League()
-        league.save()
         user_profile = UserProfile()
         user_profile.user = user
         user_profile.save()
-        ul = UserLeague(league=league, user_profile=user_profile)
-        ul.save()
     return oauth_utils.process_oauth_redirect(request, client_secrets_filename=client_secrets_filename, redirect_uri=settings.GOOGLE_REDIRECT_URI)

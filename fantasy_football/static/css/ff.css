@@ -8,3 +8,14 @@
 .form_container {
     margin:0 auto;
 }
+.player_table thead {
+    background-color:#357ebd;
+    border-color:#3071a9;
+}
+.player_row {
+    background-color:#ddd;
+    margin-bottom:20px;
+}
+/*.table-condensed tbody>tr>td {*/
+    /*padding-left:1px;*/
+/*}*/

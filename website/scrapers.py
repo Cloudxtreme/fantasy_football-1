@@ -1,7 +1,7 @@
 import lxml.html
 import re
 import logging
-
+from django.conf import settings
 
 logger = logging.getLogger('website')
 
@@ -11,7 +11,7 @@ class ESPNScraper(object):
         self.url = url
 
     def scrape(self):
-        html = lxml.html.parse('http://games.espn.go.com/ffl/clubhouse?leagueId=844419&teamId=1&seasonId=2012')
+        html = lxml.html.parse(self.url)
         data = {'players': {}}
         player_names = html.xpath('//*[@class="playertablePlayerName"]/a/text()')
         team_pos = html.xpath('//*[@class="playertablePlayerName"]/text()')
@@ -21,20 +21,25 @@ class ESPNScraper(object):
             player = player_names[i]
             try:
                 # Assume normal problems
-                team_position = team_pos[i].encode('ascii', 'replace').replace('?', ' ')
-                nil, team, position = team_position.split()
+                team_position = team_pos[i].encode('ascii', 'replace').replace('?', ' ').strip()
+                nil, team_abbr, position = team_position.split()
+                team = settings.TEAM_ABBREVIATIONS[team_abbr.upper()]
             except ValueError:
                 # Head coach? Defensive player?
-                if team_pos[i] == 'D/ST':
-                    team = re.search("(\w+)\s+D/ST", team_position).group(1)
+                print "trying to fill", team_position
+                if team_position == 'D/ST':
+                    team_short = re.search("(\w+)\s+D/ST", player_names[i]).group(1)
+                    team = settings.TEAM_TO_EDITORIAL_TEAM_FULL_NAME[team_short]
                     position = "Defense"
-                elif team_pos[i] == 'HC':
-                    team = re.search("(\w+)\s+Coach", team_position).group(1)
+                elif team_position == 'HC':
+                    team_short = player_names[i].split()[0]
+                    team = settings.TEAM_TO_EDITORIAL_TEAM_FULL_NAME[team_short]
                     position = "Head Coach"
                 else:
                     logger.error("Unknown string for team_pos: {0} from URL {1}".format(team_position.encode('ascii', 'replace'), self.url))
                     continue
             data['players'][player] = {}
+            data['players'][player]['order'] = i
             data['players'][player]['team'] = team
             data['players'][player]['position'] = position
             data['team_name'] = team_name[0].strip()

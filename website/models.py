@@ -238,6 +238,7 @@ class GoogleCredential(models.Model):
 class LeaguePlayer(models.Model):
     league = models.ForeignKey('League')
     player = models.ForeignKey('Player')
+    order = models.IntegerField()
 
     def __str__(self):
         return "{0}: {1}".format(self.league.name, self.player.name)
@@ -253,9 +254,10 @@ LEAGUE_TYPE_CHOICES = (('Yahoo', 'Yahoo'), ('ESPN', 'ESPN'))
 class League(models.Model):
     name = models.CharField(max_length=64, default="League")
     players = models.ManyToManyField(Player, through=LeaguePlayer)
-    url = models.URLField(blank=True, null=True)
+    url = models.URLField(unique=True)
     league_type = models.CharField(choices=LEAGUE_TYPE_CHOICES, max_length=32, default="ESPN")
     record = models.CharField(max_length=32, default="0 - 0")
+    player_order = models.TextField(default="Notset")
 
     def scrape(self):
         if self.league_type == 'ESPN':
@@ -272,32 +274,77 @@ class League(models.Model):
         self.record = data['record']
         self.save()
         print "name", self.name
+        # Build order list. Compare this to the existing self.player_order. Avoids having to peek at each LP.
+        order = ""
+        players = []
+        player_keys = []
+        # Build player list, and check order.
+        print data
+        order_list = [""] * len(data['players'])
         for player_name, team_pos in data['players'].items():
-            team = team_abbreviations[team_pos['team'].upper()]
+            team = team_pos['team']
             position = team_pos['position']
+            order = team_pos['order'] - 1
+            if order - 1 >= len(order_list):
+                raise ValueError("Got invalid ordering outside bounds: {0} for player {1}. Order list length: {2}".format(order, player_name, len(order_list)))
             try:
                 player = Player.objects.filter(name=player_name).filter(editorial_team_full_name=team).get(display_position=position)
-                # Create a player-league relationship
-                lp = LeaguePlayer(league=self, player=player)
-                # Try to add the relationship. Since we have key restraints, this will fail if it already exists to
-                # that player.
-                try:
-                    lp.save()
-                except IntegrityError:
-                    continue
             except Player.DoesNotExist:
-                logger.warning("Could not find player {0} from url {1}".format(player_name, self.url))
+                logger.warning("Could not find player {0}, {1}, from url {2}".format(player_name, team, self.url))
                 continue
             except Player.MultipleObjectsReturned:
                 logger.warning("Found multiple players for same player: {0} url: {1}".format(player_name, self.url))
-            # Now look for deleted players.
-        existing_players = self.players.all()
-        for existing_player in existing_players:
-            if existing_player.name not in data['players']:
-                # Delete the relationship, player no longer in league.
-                relationship = LeaguePlayer.objects.filter(league=self).filter(player=existing_player)
-                logger.debug("Deleting dropped player {0} from league {1}".format(existing_player, self.name))
-                relationship.delete()
+            players.append(player)
+            player_keys.append(player.player_key)
+            # Build the order list
+            order_list[order] = player_name
+        order_string = ",".join(order_list)
+        if self.player_order != order_string:
+            out_of_order = True
+            self.player_order = order_string
+            self.save()
+        else:
+            out_of_order = False
+        # Build a list of already associated players. Compare to find deleted and not created.
+        league_players = LeaguePlayer.objects.filter(league=self).filter(player__in=player_keys)
+        league_player_keys = league_players.values_list('player', flat=True)
+
+        # Use sets to find players not in the league, and league players not in the update.
+        lps = set(league_player_keys)
+        pls = set(player_keys)
+        deleted_player_keys = lps - pls
+        added_players = pls - lps
+
+        # Delete the players not in this league.
+        LeaguePlayer.objects.filter(league=self).filter(player__in=deleted_player_keys).delete()
+
+        # If this is a re-ordering, we need to touch every player. Touch them before we start adding, but after deleting
+        if out_of_order:
+            existing_players = LeaguePlayer.objects.prefetch_related('player').filter(league=self)
+            for existing_player in existing_players:
+                existing_player.order = order_list.index(existing_player.player.name)
+                existing_player.save()
+
+        # Add the new players
+        for player_key in added_players:
+            # Find the player in our list
+            player = None
+
+            for p in players:
+                if p.player_key == player_key:
+                    player = p
+            if player is None:
+                logger.error("Player key not in players? Really odd. key: {0}".format(player_key))
+            order = order_list.index(player.name)
+            lp = LeaguePlayer(league=self, player=player, order=order)
+            try:
+                lp.save()
+            except IntegrityError:
+                logger.exception("Couldn't save player {0} to league {1}".format(player.name, self.name))
+                continue
+
+
+
 
     def __str__(self):
         return self.name

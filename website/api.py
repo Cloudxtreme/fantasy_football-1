@@ -1,6 +1,6 @@
 import json
 import logging
-from website.models import UserProfile, League, UserLeague, Player, PlayerStat, stat_id_map, LeaguePlayer, UpdateManager
+from website.models import UserProfile, League, UserLeague, Player, PlayerStat, stat_id_map, LeaguePlayer, UpdateManager, team_abbreviations, team_to_editorial_team_full_name, team_icons
 from django.forms.models import model_to_dict
 from django.http import HttpResponseRedirect, HttpResponseBadRequest, HttpResponseNotFound, HttpResponse
 from django.contrib import messages
@@ -25,6 +25,7 @@ def scores(request, user_id=None):
     json_return = {}
     for player in players:
         json_return[player.player_key] = model_to_dict(player)
+        json_return[player.player_key]['team_abbr'] = team_abbreviations.get(player.editorial_team_full_name, 'FA')
         json_return[player.player_key]['stats'] = {}
         for stat in stats.filter(player=player):
             json_return[player.player_key]['stats'][stat.stat_id] = {'value': stat.value, 'category': stat_id_map[stat.stat_id]}
@@ -96,18 +97,40 @@ def leagues(request, league_id=None):
             leagues = leagues.filter(userprofile=user)
         if league_id is not None:
             leagues = leagues.filter(id=league_id)
-
-        print model_to_dict(leagues[0])
+        json_return = {}
+        for league in leagues:
+            # print "league", league
+            json_return[league.id] = league_to_json(league)
+        return render_to_json(request, json_return)
 
 def league_to_json(league):
-    data = {}
+    data = {
+        'name': league.name,
+        'record': league.record,
+        'url': league.url,
+        'league_type': league.league_type,
+        'id': league.id
+    }
+
     league_players = LeaguePlayer.objects.prefetch_related().filter(league=league)
+    data['players'] = {}
     for league_player in league_players:
         player = league_player.player
-        data[player.player_key] = model_to_dict(player)
-        data[player.player_key]['stats'] = {}
+
+        data['players'][player.player_key] = model_to_dict(player)
+        data['players'][player.player_key]['id'] = player.player_key
+        abbrv = '?'
+        for abbreviation, full_name in team_abbreviations.items():
+            if full_name == player.editorial_team_full_name:
+                abbrv = abbreviation
+        print "abbrv", abbrv
+        data['players'][player.player_key]['team_abbr'] = abbrv
+        data['players'][player.player_key]['icon'] = team_icons.get(abbrv, None)
+        data['players'][player.player_key]['stats'] = {}
         for stat in player.stats.all():
-            data[player.player_key]['stats'][stat.stat_id] = model_to_dict(stat)
+            data['players'][player.player_key]['stats'][stat.stat_id] = model_to_dict(stat)
+            data['players'][player.player_key]['stats'][stat.stat_id]['id'] = stat.id
+        print data['players'][player.player_key]
     print data
     return data
 
