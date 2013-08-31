@@ -6,11 +6,10 @@ Replace this with more appropriate tests for your application.
 """
 
 from django.test import TestCase
+from scrapers import ESPNScraper
 
-
-class SimpleTest(TestCase):
-    def test_basic_addition(self):
-        """
-        Tests that 1 + 1 always equals 2.
-        """
-        self.assertEqual(1 + 1, 2)
+class ScraperTest(TestCase):
+    def test_espn_basic(self):
+        url = 'http://games.espn.go.com/ffl/clubhouse?leagueId=844419&teamId=8&seasonId=2013'
+        scraper = ESPNScraper(url)
+        scraper.scrape()

@@ -239,6 +239,12 @@ class LeaguePlayer(models.Model):
     league = models.ForeignKey('League')
     player = models.ForeignKey('Player')
     order = models.IntegerField()
+    fantasy_points = models.IntegerField(default=0)
+    average_points = models.IntegerField(default=0)
+    last_points = models.IntegerField(default=0)
+    percent_own = models.FloatField(default=0)
+    percent_starting = models.FloatField(default=0)
+    percent_change = models.FloatField(default=0)
 
     def __str__(self):
         return "{0}: {1}".format(self.league.name, self.player.name)
@@ -257,7 +263,7 @@ class League(models.Model):
     url = models.URLField(unique=True)
     league_type = models.CharField(choices=LEAGUE_TYPE_CHOICES, max_length=32, default="ESPN")
     record = models.CharField(max_length=32, default="0 - 0")
-    player_order = models.TextField(default="Notset")
+    player_order = models.TextField(blank=True, null=True)
 
     def scrape(self):
         if self.league_type == 'ESPN':
