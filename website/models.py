@@ -1,17 +1,19 @@
 import datetime
 import json
 import logging
+import urllib2
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils.timezone import utc
+import lxml
 from oauth2client.client import OAuth2Credentials
 from django.core.validators import URLValidator
 from django.contrib import admin
 from yahoo import YQL
 from glass.mirror import Mirror, Timeline
-from scrapers import ESPNScraper, YahooScraper
-# from google_glass import send_notifications
 from django.db import connection, IntegrityError
+from django.forms.models import model_to_dict
+import time
 
 TOKEN_FILE = 'yahoo_tokens.pkl'
 GAME_KEY = 314
@@ -68,13 +70,17 @@ class Player(models.Model):
     last_updated = models.DateTimeField(auto_now=True)
     # Increment this each time a stat is updated, so we can better order objects.
     times_updates = models.IntegerField(default=0)
+    status = models.CharField(max_length=16, blank=True, null=True)
+    espn_id = models.IntegerField(blank=True, null=True, default=None)
 
     @classmethod
     def from_json(cls, json):
         player = Player()
         print "JSON", json
         # Load up the straight name to name matches
-        for key in ['is_undroppable', 'display_position', 'editorial_player_key', 'editorial_team_abbr', 'editorial_team_full_name', 'editorial_team_key', 'image_url', 'player_id', 'player_key', 'uniform_number']:
+        for key in ['is_undroppable', 'display_position', 'editorial_player_key', 'editorial_team_abbr',
+                    'editorial_team_full_name', 'editorial_team_key', 'image_url', 'player_id', 'player_key',
+                    'uniform_number', 'status']:
             # print "setting", key, json[key]
             setattr(player, key, json[key])
         player.bye_week = json['bye_weeks']['week']
@@ -114,13 +120,14 @@ class PlayerStat(models.Model):
         Given the new value, check if we should shoot out a notification.
         """
         if value < self.value:
-            logger.warning("Somehow value went down: player: {0}, stat_id: {1}, old_val: {2}, new_val: {3}".format(self.player, self.stat_id, self.value, value))
+            logger.warning("Somehow value went down: player: {0}, stat_id: {1}, old_val: {2}, new_val: {3}".format(
+                self.player, self.stat_id, self.value, value))
             self.value = value
             self.save()
             return 0
         elif value > self.value:
             diff = float(value) - float(self.value)
-            if diff >= stat_notification_minimums[self.stat_id] and stat_notification_minimums[self.stat_id] > 0:
+            if diff >= stat_notification_minimums[self.stat_id] > 0:
                 # Difference meets the requirements. Return True and send out notification.
                 self.value = value
                 self.save()
@@ -239,12 +246,13 @@ class LeaguePlayer(models.Model):
     league = models.ForeignKey('League')
     player = models.ForeignKey('Player')
     order = models.IntegerField()
-    fantasy_points = models.IntegerField(default=0)
-    average_points = models.IntegerField(default=0)
-    last_points = models.IntegerField(default=0)
+    fantasy_points = models.FloatField(default=0)
+    average_points = models.FloatField(default=0)
+    last = models.FloatField(default=0)
     percent_own = models.FloatField(default=0)
     percent_starting = models.FloatField(default=0)
     percent_change = models.FloatField(default=0)
+    bench = models.BooleanField(default=False)
 
     def __str__(self):
         return "{0}: {1}".format(self.league.name, self.player.name)
@@ -254,6 +262,19 @@ class LeaguePlayer(models.Model):
 
     class Meta:
         unique_together = (('league', 'player'))
+
+    @classmethod
+    def from_json(cls, league, player):
+        player_data = player.league_player_data
+        lp = LeaguePlayer(league=league, player=player)
+        for attr in ['order', 'fantasy_points', 'average_points', 'last', 'percent_own', 'percent_starting',
+                     'percent_change', 'bench']:
+            if player_data[attr] == '--':
+                player_data[attr] = 0
+            setattr(lp, attr, player_data[attr])
+        lp.save()
+        return lp
+
 
 LEAGUE_TYPE_CHOICES = (('Yahoo', 'Yahoo'), ('ESPN', 'ESPN'))
 
@@ -287,19 +308,22 @@ class League(models.Model):
         # Build player list, and check order.
         print data
         order_list = [""] * len(data['players'])
-        for player_name, team_pos in data['players'].items():
-            team = team_pos['team']
-            position = team_pos['position']
-            order = team_pos['order'] - 1
-            if order - 1 >= len(order_list):
+        for player_name, player_data in data['players'].items():
+            team_abbr = player_data['team']
+            team = team_abbreviations.get(team_abbr.upper(), None)
+            position = player_data['position']
+            order = player_data['order']
+
+            if order >= len(order_list):
                 raise ValueError("Got invalid ordering outside bounds: {0} for player {1}. Order list length: {2}".format(order, player_name, len(order_list)))
             try:
                 player = Player.objects.filter(name=player_name).filter(editorial_team_full_name=team).get(display_position=position)
             except Player.DoesNotExist:
-                logger.warning("Could not find player {0}, {1}, from url {2}".format(player_name, team, self.url))
+                logger.warning("Could not find player {0}, {1}, {2} from url {3}".format(player_name, team, position, self.url))
                 continue
             except Player.MultipleObjectsReturned:
                 logger.warning("Found multiple players for same player: {0} url: {1}".format(player_name, self.url))
+            player.league_player_data = player_data
             players.append(player)
             player_keys.append(player.player_key)
             # Build the order list
@@ -335,21 +359,49 @@ class League(models.Model):
         for player_key in added_players:
             # Find the player in our list
             player = None
-
             for p in players:
                 if p.player_key == player_key:
                     player = p
             if player is None:
                 logger.error("Player key not in players? Really odd. key: {0}".format(player_key))
             order = order_list.index(player.name)
-            lp = LeaguePlayer(league=self, player=player, order=order)
+            lp = LeaguePlayer.from_json(league=self, player=player)
             try:
                 lp.save()
             except IntegrityError:
                 logger.exception("Couldn't save player {0} to league {1}".format(player.name, self.name))
                 continue
 
+    def to_json(self):
+        data = {
+            'name': self.name,
+            'record': self.record,
+            'url': self.url,
+            'league_type': self.league_type,
+            'id': self.id
+        }
 
+        league_players = LeaguePlayer.objects.prefetch_related().filter(league=self)
+        data['players'] = {}
+        for league_player in league_players:
+            player = league_player.player
+
+            data['players'][player.player_key] = model_to_dict(player)
+            data['players'][player.player_key]['id'] = player.player_key
+            abbrv = '?'
+            for abbreviation, full_name in team_abbreviations.items():
+                if full_name == player.editorial_team_full_name:
+                    abbrv = abbreviation
+            print "abbrv", abbrv
+            data['players'][player.player_key]['team_abbr'] = abbrv
+            data['players'][player.player_key]['icon'] = team_icons.get(abbrv, None)
+            data['players'][player.player_key]['stats'] = {}
+            for stat in player.stats.all():
+                data['players'][player.player_key]['stats'][stat.stat_id] = model_to_dict(stat)
+                data['players'][player.player_key]['stats'][stat.stat_id]['id'] = stat.id
+            print data['players'][player.player_key]
+        print data
+        return data
 
 
     def __str__(self):
@@ -382,6 +434,234 @@ class UserProfile(models.Model):
 
     def __repr__(self):
         return self.__str__()
+
+
+class PlayerNews(models.Model):
+    player = models.ForeignKey(Player, related_name="news")
+    title = models.TextField()
+    description = models.TextField()
+    published = models.DateTimeField()
+    link = models.URLField()
+    mobile_link = models.URLField(blank=True, null=True, default=None)
+    news_id = models.IntegerField()
+
+    @classmethod
+    def from_json(cls, player, json_data):
+        news = PlayerNews()
+        news.player = player
+        news.title = json_data['title']
+        news.description = json_data['description']
+        news.published = json_data['published']
+        news.link = json_data['links']['web']['href']
+        news.mobile_link = json_data['links']['mobile']['href']
+        news.news_id = json_data['id']
+        news.save()
+        return news
+
+    class Meta:
+        unique_together = (('player', 'news_id'))
+
+    def __str__(self):
+        return "({0}) {1}: {2}".format(self.published, self.player.name, self.title)
+
+    def __repr__(self):
+        return self.__str__()
+
+class ESPNScraper(object):
+    def __init__(self, url):
+        self.url = url
+
+    def scrape(self):
+        print "Scraping ", self.url
+        html = lxml.html.parse(self.url)
+        data = {'players': {}}
+
+        team_name = html.xpath('//*[@id="content"]/div[1]/div[4]/div/div/div[3]/div[1]/div[2]/div[1]/h3/text()')
+        record = html.xpath('//*[@id="content"]/div[1]/div[4]/div/div/div[3]/div[1]/div[2]/div[2]/h4/text()')
+        data['team_name'] = team_name[0].strip()
+        data['record'] = record[0].strip()
+        # Might break PEPs, but certain rows are going to be ignored. This is easy.
+        counter = 0
+        all_rows = html.xpath('//*[@id="playertable_0"]/tr')
+        for row in all_rows:
+            row_list = row.xpath('.//text()')
+            print row_list, len(row_list)
+            if row_list[0] not in ['STARTERS', 'SLOT', 'BENCH']:
+                # Normal example:
+                # ['QB', 'Tom Brady', u', NE\xa0QB', '@Buf', 'Sun 1:00', '2', '387.3', '24.2', '--', '--', '26th', '94.3', '100.0', '+0']
+                # HC/Defense example
+                # ['Bench', 'Seahawks D/ST', u'\xa0D/ST', '@Car', 'Sun 1:00', '3', '221.6', '13.9', '--', '--', '11th', '98.7', '100.0', '+0']
+                # ['HC', 'Packers Coach', u'\xa0HC', '@SF', 'Sun 4:25', '7', '61.3', '3.8', '--', '--', '--', '99.3', '100.0', '+0']
+                if len(row_list) == 15:
+                    status = row_list[3]
+                    # Cut status out for uniform rows
+                    row_list = row_list[:3] + row_list[4:]
+                else:
+                    status = 'H'
+                player_name = row_list[1]
+                player_values = {
+                    'current_pos': row_list[0],
+                    'name': player_name,
+                    'rank': row_list[5],
+                    'fantasy_points': row_list[6],
+                    'average_points': row_list[7],
+                    'percent_starting': row_list[11],
+                    'percent_own': row_list[12],
+                    'order': counter,
+                    'status': status,
+                }
+                if row_list[8].strip() == '--':
+                    player_values['last'] = '0'
+                else:
+                    player_values['last'] = row_list[8]
+                if row_list[9].strip() == '--':
+                    player_values['projected_points'] = '0'
+                else:
+                    player_values['projected_points'] = row_list[8]
+                print 'change', player_name, row_list[13], len(row_list)
+                if row_list[13].strip()[0] == '+':
+                    player_values['percent_change'] = row_list[13].strip()[1:]
+                else:
+                    player_values['percent_change'] = str(0 - float(row_list[13].strip()[1:]))
+                if row_list[0] == "Bench":
+                    player_values['bench'] = True
+                else:
+                    player_values['bench'] = False
+                abbr_pos = row_list[2].encode('ascii', 'replace').replace('?', ' ').strip().replace(', ', '').split()[0]
+                if abbr_pos == 'HC':
+
+                    player_values['position'] = 'HC'
+                    player_values['team'] = row_list[1].split()[0]
+                elif abbr_pos == 'D/ST':
+                    player_values['position'] = 'D/ST'
+                    player_values['team'] = row_list[1].split()[0]
+                else:
+                    player_values['position'] = row_list[2].encode('ascii', 'replace').replace('?', ' ').strip().replace(', ', '').split()[1]
+                    player_values['team'] = abbr_pos
+                print player_values
+                # Only increment on player rows.
+                counter += 1
+                data['players'][player_name] = player_values
+
+        print data
+        return data
+
+class YahooScraper(object):
+    def __init__(self, url, credentials):
+        self.url = url
+        self.credentials = credentials
+
+    def scrape(self):
+        pass
+
+
+class ESPNNewsScraper(object):
+    def __init__(self, api_key):
+        self.api_key = api_key
+
+    def get_all_players(self):
+        offset = 0
+        results = 100000
+        # ID: fullName
+
+        # Loop until break
+        while (offset + 1) * 50 < results:
+            resolve_list = {}
+            player_dict = {}
+            url = self.player_id_url(offset=offset * 50)
+            url_data = self.fetch_json(url)
+            results = url_data['resultsCount']
+            players = url_data['sports'][0]['leagues'][0]['athletes']
+            for player in players:
+                player_dict[player['id']] = player['fullName']
+            player_instances = Player.objects.filter(name__in=player_dict.values())
+            for player_id, player_name in player_dict.items():
+                try:
+                    player_instance = player_instances.get(name=player_name)
+                    player_instance.espn_id = player_id
+                    # logger.info("Saving ESPN id {0} to player {1}.".format(player_id, player_name))
+                    player_instance.save()
+                except Player.DoesNotExist:
+                    # Linemen, individual D players, etc.
+                    # logger.warning("ESPN has a player we don't: {0}, id: {1}".format(player_name, player_id))
+                    continue
+                except Player.MultipleObjectsReturned:
+                    logger.error("Player name collision because ESPN didn't provide team/position. Adding {0}, "
+                                   "id: {1} to resolve list.".format(player_name, player_id))
+                    resolve_list[player_id] = player_name
+            # Resolve our collisions
+            self.resolve_conflicts(resolve_list)
+            # print url_data
+            # print player_dict
+            time.sleep(0.5)
+            offset += 1
+            # break
+
+    def get_player_news(self, player_id):
+        url = self.player_news_url(player_id=player_id)
+        json_data = self.fetch_json(url)
+        return json_data['headlines']
+
+    def resolve_conflicts(self, resolve_list):
+        pass
+
+    def player_id_url(self, offset=0):
+        return "http://api.espn.com/v1/sports/football/nfl/athletes?apikey={0}&offset={1}".format(self.api_key, offset)
+
+    def fetch_json(self, url):
+        url_data = json.loads(urllib2.urlopen(url).read())
+        if url_data['status'] != 'success':
+            raise ValueError("Failed status: {0}".format(url_data['status']))
+        return url_data
+
+    def player_news_url(self, player_id, offset=0):
+        url = "http://api.espn.com/v1/sports/football/nfl/news/?athletes={0}&insider=no&apikey={1}&offset={2}".format(
+            player_id, self.api_key, offset)
+        return url
+
+    def ticker_url(self, offset=0):
+        url = "http://api.espn.com/v1/sports/football/nfl/news/?insider=no&apikey={0}&offset={1}&limit=50".format(
+            self.api_key, offset)
+        return url
+
+    def seed_player_news(self):
+        for player in Player.objects.all():
+            if player.espn_id:
+                news = self.get_player_news(player.espn_id)
+                for news_item in news:
+                    try:
+                        player_news = PlayerNews.from_json(player, news_item)
+                        logger.info("Found news for player {0}, headline: {1}".format(player.name, player_news.title))
+                    except Exception:
+                        logger.exception()
+                        continue
+
+    def filter_all_news(self):
+        """
+        Grabs all the headlines, sees if they apply to any of our players, if so, attempts to create a story about
+        them.
+        Should be run at least once a minute.
+        """
+        url = self.ticker_url()
+        json_data = self.fetch_json(url)
+        for headline in json_data['headlines']:
+            # Make a list of espn_ids to search the DB for.
+            espn_ids = []
+            for category in headline['categories']:
+                if category['type'] == "athlete":
+                    espn_ids.append(category["athleteId"])
+            if len(espn_ids) == 0:
+                continue
+            # Get all affected players
+            players = Player.objects.filter(espn_id__in=espn_ids)
+            if len(players) == 0:
+                continue
+            for player in players:
+                try:
+                    player_news = PlayerNews.from_json(player, headline)
+                except Exception:
+                    continue
+                logger.info("Matched news to player {0}, headline: {1}".format(player.name, player_news.title))
 
 
 class UpdateManager(object):
@@ -725,3 +1005,5 @@ admin.site.register(UserLeague)
 admin.site.register(UserProfile)
 admin.site.register(LeaguePlayer)
 admin.site.register(League)
+admin.site.register(PlayerNews)
+

@@ -35,38 +35,38 @@ def scores(request, user_id=None):
 
 
 def players(request):
-    if request.method == "POST":
-        player_name = request.POST['player_name'].strip()
-        try:
-            player = Player.objects.get(name__iexact=player_name)
-        except Player.MultipleObjectsReturned:
-            # TODO Send the user an error instead of just choosing a player for them when multiple match their search.
-            player = Player.objects.filter(name__iexact=player_name)[0]
-        except Player.DoesNotExist:
-            # TODO Try to find the player on YQL, if we don't just grab all of them first.
-            return HttpResponseNotFound("No player found.")
-        user_profile = UserProfile.objects.get(user=request.user)
-        league = user_profile.leagues.all()[0]
-        league_player = LeaguePlayer(league=league, player=player).save()
-        stats = PlayerStat.objects.filter(player=player)
-        json_return = {}
-        json_return[player.player_key] = model_to_dict(player)
-        json_return[player.player_key]['stats'] = {}
-        for stat in stats.filter(player=player):
-            json_return[player.player_key]['stats'][stat.stat_id] = {'value': stat.value, 'category': stat_id_map[stat.stat_id]}
-        if request.is_ajax():
-            return render_to_json(request, json_return)
-        else:
-            return HttpResponseRedirect('/')
-    else:
-        return HttpResponseBadRequest("Only POST supported currently.")
+    return HttpResponseBadRequest("Not implemented")
+#     if request.method == "POST":
+#         player_name = request.POST['player_name'].strip()
+#         try:
+#             player = Player.objects.get(name__iexact=player_name)
+#         except Player.MultipleObjectsReturned:
+#             # TODO Send the user an error instead of just choosing a player for them when multiple match their search.
+#             player = Player.objects.filter(name__iexact=player_name)[0]
+#         except Player.DoesNotExist:
+#             # TODO Try to find the player on YQL, if we don't just grab all of them first.
+#             return HttpResponseNotFound("No player found.")
+#         user_profile = UserProfile.objects.get(user=request.user)
+#         league = user_profile.leagues.all()[0]
+#         league_player = LeaguePlayer(league=league, player=player).save()
+#         stats = PlayerStat.objects.filter(player=player)
+#         json_return = {}
+#         json_return[player.player_key] = model_to_dict(player)
+#         json_return[player.player_key]['stats'] = {}
+#         for stat in stats.filter(player=player):
+#             json_return[player.player_key]['stats'][stat.stat_id] = {'value': stat.value, 'category': stat_id_map[stat.stat_id]}
+#         if request.is_ajax():
+#             return render_to_json(request, json_return)
+#         else:
+#             return HttpResponseRedirect('/')
+#     else:
+#         return HttpResponseBadRequest("Only POST supported currently.")
+
 
 def leagues(request, league_id=None):
     if request.method == "POST":
         if not request.user.is_authenticated():
             return HttpResponseBadRequest("User must be authenticated to add a league.")
-        if league_id is not None:
-            return HttpResponseBadRequest("League ID not legal argument when adding league.")
         try:
             user_profile = UserProfile.objects.get(user=request.user.id)
         except UserProfile.DoesNotExist:
@@ -76,12 +76,12 @@ def leagues(request, league_id=None):
         if league_url is None:
             return HttpResponseBadRequest("League URL cannot be none.")
         league_type = request.POST.get('league_type', 'ESPN')
-        league = League(url=league_url.strip(), league_type=league_type)
+        league = League(url=league_url.strip(), league_type=league_type, player_order="")
         league.save()
         league.update_league()
         user_league = UserLeague(league=league, user_profile=user_profile)
         user_league.save()
-        league_json = league_to_json(league)
+        league_json = league.to_json()
         return render_to_json(request, league_json)
 
     elif request.method == "GET":
@@ -100,39 +100,8 @@ def leagues(request, league_id=None):
         json_return = {}
         for league in leagues:
             # print "league", league
-            json_return[league.id] = league_to_json(league)
+            json_return[league.id] = league.to_json()
         return render_to_json(request, json_return)
-
-def league_to_json(league):
-    data = {
-        'name': league.name,
-        'record': league.record,
-        'url': league.url,
-        'league_type': league.league_type,
-        'id': league.id
-    }
-
-    league_players = LeaguePlayer.objects.prefetch_related().filter(league=league)
-    data['players'] = {}
-    for league_player in league_players:
-        player = league_player.player
-
-        data['players'][player.player_key] = model_to_dict(player)
-        data['players'][player.player_key]['id'] = player.player_key
-        abbrv = '?'
-        for abbreviation, full_name in team_abbreviations.items():
-            if full_name == player.editorial_team_full_name:
-                abbrv = abbreviation
-        print "abbrv", abbrv
-        data['players'][player.player_key]['team_abbr'] = abbrv
-        data['players'][player.player_key]['icon'] = team_icons.get(abbrv, None)
-        data['players'][player.player_key]['stats'] = {}
-        for stat in player.stats.all():
-            data['players'][player.player_key]['stats'][stat.stat_id] = model_to_dict(stat)
-            data['players'][player.player_key]['stats'][stat.stat_id]['id'] = stat.id
-        print data['players'][player.player_key]
-    print data
-    return data
 
 
 def render_to_json(request, data):
